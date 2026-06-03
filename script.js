@@ -96,17 +96,29 @@ function generateQRCode() {
   var container = document.getElementById('qrCodeCanvas');
   container.innerHTML = '';   // clear any old QR
 
-  var payload = [
-    'MEMBER CARD',
-    'Name: ' + memberData.memberName,
-    'ID: ' + memberData.seniorCareId,
-    'Club: ' + memberData.clubMembership,
-    'From: ' + memberData.membershipDate,
-    'To: ' + memberData.expiryDate
-  ].join('\n');
+  // ── Build structured JSON payload ──
+  var memberJson = JSON.stringify({
+    name:           memberData.memberName,
+    id:             memberData.seniorCareId,
+    club:           memberData.clubMembership,
+    membershipDate: memberData.membershipDate,
+    expiryDate:     memberData.expiryDate
+  });
 
-  // Store the payload globally for scanner reference
+  // ── Base64url-encode the JSON (URL-safe, no padding issues) ──
+  var b64 = btoa(unescape(encodeURIComponent(memberJson)))
+              .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+  // ── Build the result page URL (same folder as index.html) ──
+  // Works locally: file:///path/to/result.html?data=...
+  // Works hosted: https://yourdomain.com/result.html?data=...
+  var baseUrl = window.location.href.replace(/\/[^\/]*$/, '') + '/result.html';
+  var payload = baseUrl + '?data=' + b64;
+
+  // ── Store the payload globally for the in-app scanner ──
   window.generatedQRData = payload;
+  // Also store the structured data for in-app result display
+  window.generatedMemberJson = memberJson;
 
   // Build QR using QRCode.js (from CDN)
   try {
@@ -282,7 +294,28 @@ function showResult(qrData) {
   var parsed = null;
   var isMemberQR = false;
 
-  if (qrData.trim().indexOf('MEMBER CARD') === 0) {
+  // ── Try parsing as URL with ?data= param (new format) ──
+  var urlMatch = qrData.match(/[?&]data=([^&\s]*)/);
+  if (urlMatch) {
+    try {
+      var b64 = urlMatch[1].replace(/-/g, '+').replace(/_/g, '/');
+      var jsonStr = decodeURIComponent(escape(atob(b64)));
+      var obj = JSON.parse(jsonStr);
+      if (obj && obj.name) {
+        parsed = {
+          memberName:     obj.name     || '',
+          seniorCareId:   obj.id       || '',
+          clubMembership: obj.club     || '',
+          membershipDate: obj.membershipDate || '',
+          expiryDate:     obj.expiryDate     || ''
+        };
+        isMemberQR = true;
+      }
+    } catch(e) { /* fall through */ }
+  }
+
+  // ── Legacy fallback: plain text "MEMBER CARD" format ──
+  if (!isMemberQR && qrData.trim().indexOf('MEMBER CARD') === 0) {
     var lines = qrData.split('\n');
     function extract(prefix) {
       var line = '';
@@ -305,7 +338,7 @@ function showResult(qrData) {
 
   var banner = document.getElementById('resultBanner');
   if (isMemberQR) {
-    var match = parsed.memberName === memberData.memberName &&
+    var match = parsed.memberName.toLowerCase() === memberData.memberName.toLowerCase() &&
                 parsed.seniorCareId === memberData.seniorCareId;
     if (match) {
       banner.className = 'success-banner match';
