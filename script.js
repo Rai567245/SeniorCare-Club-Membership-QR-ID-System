@@ -110,44 +110,89 @@ function generateQRCode() {
               .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
   // ── Build the result page URL (same folder as index.html) ──
-  // Works locally: file:///path/to/result.html?data=...
-  // Works hosted: https://yourdomain.com/result.html?data=...
   var baseUrl = window.location.href.replace(/\/[^\/]*$/, '') + '/result.html';
   var payload = baseUrl + '?data=' + b64;
 
   // ── Store the payload globally for the in-app scanner ──
   window.generatedQRData = payload;
-  // Also store the structured data for in-app result display
   window.generatedMemberJson = memberJson;
 
-  // Build QR using QRCode.js (from CDN)
+  // ── QR generation config ──
+  // Step 1: Generate at HIGH resolution into a hidden offscreen div.
+  // QRCode.js renders at the exact px size you specify; larger = crisper print.
+  var QR_SIZE   = 800;  // px — high-res master for download
+  var QUIET_PX  = 60;   // quiet-zone padding on each side (≥4 modules recommended)
+  var DISPLAY_SIZE = 220; // px — what the user sees on screen
+
+  // Hidden container for the high-res render
+  var offscreen = document.createElement('div');
+  offscreen.style.cssText = 'position:absolute;left:-9999px;top:-9999px;visibility:hidden;';
+  document.body.appendChild(offscreen);
+
   try {
-    new QRCode(container, {
+    new QRCode(offscreen, {
       text:         payload,
-      width:        220,
-      height:       220,
+      width:        QR_SIZE,
+      height:       QR_SIZE,
       colorDark:    '#000000',
       colorLight:   '#ffffff',
-      correctLevel: QRCode.CorrectLevel.H
+      correctLevel: QRCode.CorrectLevel.H   // Level H — 30% damage tolerance
     });
 
-    // ── FIX: Ensure white background for scannable QR ──
-    // QRCode.js draws onto a canvas with transparent pixels.
-    // Dark theme makes transparent areas look black, breaking scanners.
-    // We wait for QRCode.js to finish, then paint white background.
-    setTimeout(function() {
-      var canvas = container.querySelector('canvas');
-      if (canvas) {
-        var ctx = canvas.getContext('2d');
-        var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.putImageData(imageData, 0, 0);
+    setTimeout(function () {
+      var srcCanvas = offscreen.querySelector('canvas');
+      var srcImg    = offscreen.querySelector('img');
+
+      // ── Step 2: Composite onto a master canvas with quiet zone ──
+      // Total canvas size = QR_SIZE + quiet zone on both sides
+      var totalSize = QR_SIZE + QUIET_PX * 2;
+      var master    = document.createElement('canvas');
+      master.width  = totalSize;
+      master.height = totalSize;
+      var ctx = master.getContext('2d');
+
+      // Solid white background (covers entire canvas incl. quiet zone)
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, totalSize, totalSize);
+
+      // Draw the QR onto the master, offset by the quiet zone
+      if (srcCanvas) {
+        // Redraw source with white background first (handles transparent canvas)
+        var tempCtx = srcCanvas.getContext('2d');
+        var imgData = tempCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height);
+        tempCtx.fillStyle = '#ffffff';
+        tempCtx.fillRect(0, 0, srcCanvas.width, srcCanvas.height);
+        tempCtx.putImageData(imgData, 0, 0);
+        ctx.drawImage(srcCanvas, QUIET_PX, QUIET_PX, QR_SIZE, QR_SIZE);
+      } else if (srcImg) {
+        var img = new Image();
+        img.onload = function () { ctx.drawImage(img, QUIET_PX, QUIET_PX, QR_SIZE, QR_SIZE); };
+        img.src = srcImg.src;
       }
+
+      // ── Step 3: Store master canvas for download ──
+      window.qrMasterCanvas = master;
+
+      // ── Step 4: Render a scaled-down DISPLAY version on screen ──
+      var displayTotal = DISPLAY_SIZE + 32; // 16px quiet zone each side on screen
+      var display = document.createElement('canvas');
+      display.width  = displayTotal;
+      display.height = displayTotal;
+      var dCtx = display.getContext('2d');
+      dCtx.fillStyle = '#ffffff';
+      dCtx.fillRect(0, 0, displayTotal, displayTotal);
+      dCtx.drawImage(master, 0, 0, totalSize, totalSize, 0, 0, displayTotal, displayTotal);
+      display.style.display = 'block';
+      container.appendChild(display);
+
+      // Clean up hidden offscreen element
+      document.body.removeChild(offscreen);
     }, 0);
+
   } catch (e) {
     console.error('QR Generation Error:', e);
-    container.innerHTML = '<p style="color: var(--red); padding: 20px; text-align: center;">Failed to generate QR code. Please try again.</p>';
+    document.body.removeChild(offscreen);
+    container.innerHTML = '<p style="color:var(--red);padding:20px;text-align:center;">Failed to generate QR code. Please try again.</p>';
   }
 
   buildCardPreview();
@@ -191,14 +236,26 @@ function buildCardPreview() {
 }
 
 function downloadQR() {
-  var canvas = document.querySelector('#qrCodeCanvas canvas');
-  var img    = document.querySelector('#qrCodeCanvas img');
-  var src    = canvas ? canvas.toDataURL('image/png') : (img ? img.src : null);
-  if (!src) { alert('QR not found — please regenerate.'); return; }
+  // ── Always download from the high-res master canvas (800px + quiet zone) ──
+  // This guarantees a print-quality PNG with proper white background and margins.
+  var master = window.qrMasterCanvas;
+
+  if (!master) {
+    // Fallback: try to grab whatever canvas is on screen
+    var fallback = document.querySelector('#qrCodeCanvas canvas');
+    if (!fallback) { alert('QR not found — please regenerate.'); return; }
+    master = fallback;
+  }
+
+  // Export as PNG with maximum quality
+  var src = master.toDataURL('image/png', 1.0);
+
   var a = document.createElement('a');
   a.href = src;
   a.download = 'QR_' + memberData.memberName.replace(/\s+/g, '_') + '.png';
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
 function goToScanner() {
@@ -410,6 +467,9 @@ function resetAll() {
   if (html5QrcodeScanner) { html5QrcodeScanner.stop().catch(function(){}); html5QrcodeScanner = null; }
   memberData = { memberName:'', seniorCareId:'', clubMembership:'', membershipDate:'', expiryDate:'' };
   scanComplete = false;
+  window.qrMasterCanvas = null;
+  window.generatedQRData = null;
+  window.generatedMemberJson = null;
   ['memberName','seniorCareId','clubMembership','membershipDate','expiryDate'].forEach(function(id) {
     document.getElementById(id).value = '';
   });
