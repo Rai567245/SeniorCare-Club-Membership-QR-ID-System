@@ -2,7 +2,7 @@
 
 SeniorCare is a web-based membership identification and verification system that utilizes QR code technology to streamline member registration, identification, and validation processes. Built using HTML, CSS, and JavaScript, the application allows organizations, clubs, and community groups to generate unique QR-based membership IDs that can be scanned and verified instantly.
 
-<img width="797" height="776" alt="image" src="https://github.com/user-attachments/assets/af5035aa-048b-44b0-b131-f9f5a5ed0d4f" />
+<img width="1919" height="970" alt="image" src="https://github.com/user-attachments/assets/d7b2f3e4-739d-4605-9966-6adf07a008fe" />
 
 ---
 
